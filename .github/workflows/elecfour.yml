@@ -1,0 +1,18 @@
+name: elecfour
+
+on: push
+
+jobs:
+  super-lint:
+    name: Elective Four Midterm
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Elective Four Project
+        uses: github/super-linter@v5
+        env:
+          DEFAULT_BRANCH: main
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN}}
+          
