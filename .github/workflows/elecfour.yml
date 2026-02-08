@@ -24,4 +24,4 @@ jobs:
 
       - name: Run project
         run: |
-          python main.py
+          python IMAGEPROCESSING.py
