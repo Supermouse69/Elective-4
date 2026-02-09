@@ -3,6 +3,10 @@ name: Elective Four – Auto Run
 on:
   push:
 
+# ✅ REQUIRED: allow GitHub Actions to push commits
+permissions:
+  contents: write
+
 jobs:
   run-project:
     name: Run Elective Four Project
