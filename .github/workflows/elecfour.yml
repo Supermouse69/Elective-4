@@ -26,7 +26,6 @@ jobs:
         run: |
           python IMAGEPROCESSING.py
 
-      # ✅ OPTION 1: Upload output folder as artifact
       - name: Upload processed images
         uses: actions/upload-artifact@v4
         with:
