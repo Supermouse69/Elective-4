@@ -1,11 +1,6 @@
 import os
-import time
 import cv2
 import numpy as np
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-
-RUN_MODE = os.getenv("RUN_MODE", "local")  # local | github
 
 SUPPORTED_INPUTS = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp')
 
@@ -21,126 +16,77 @@ for f in FILTERS.values():
     os.makedirs(f["input"], exist_ok=True)
     os.makedirs(f["output"], exist_ok=True)
 
-def apply_gaussian_blur(img):
+# ================= FILTERS =================
+
+def gaussian(img):
     return cv2.GaussianBlur(img, (15, 15), 0)
 
-def apply_bloom(img):
+def bloom(img):
     blur = cv2.GaussianBlur(img, (0, 0), 15)
     return cv2.addWeighted(img, 1.2, blur, 0.6, 0)
 
-def apply_vignette(img):
+def vignette(img):
     rows, cols = img.shape[:2]
+
     kernel_x = cv2.getGaussianKernel(cols, 200)
     kernel_y = cv2.getGaussianKernel(rows, 200)
     mask = kernel_y * kernel_x.T
-    mask /= mask.max()
-    output = img.copy()
-    for i in range(3):
-        output[:, :, i] = output[:, :, i] * mask
-    return output
+    mask = mask / mask.max()
 
-def apply_color_grading(img):
+    # Convert image to float
+    out = img.astype(np.float32)
+
+    for i in range(3):
+        out[:, :, i] = out[:, :, i] * mask
+
+    # Convert back to uint8
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def grading(img):
     lut = np.zeros((256, 1, 3), dtype=np.uint8)
     for i in range(256):
-        lut[i, 0] = [
-            np.clip(i * 1.05, 0, 255),
-            np.clip(i * 1.00, 0, 255),
-            np.clip(i * 1.15, 0, 255)
+        lut[i][0] = [
+            min(255, int(i * 1.05)),
+            min(255, int(i * 1.00)),
+            min(255, int(i * 1.15))
         ]
     return cv2.LUT(img, lut)
 
-def apply_lens_flare(img):
+def flare(img):
     overlay = img.copy()
     h, w = img.shape[:2]
-    cx = np.random.randint(w // 4, w * 3 // 4)
-    cy = np.random.randint(h // 4, h * 3 // 4)
-
+    cx, cy = w // 2, h // 2
     for r in range(40, 200, 40):
         cv2.circle(overlay, (cx, cy), r, (255, 255, 255), -1)
-
     return cv2.addWeighted(overlay, 0.3, img, 0.7, 0)
 
-FILTER_FUNCTIONS = {
-    "gaussian": apply_gaussian_blur,
-    "bloom": apply_bloom,
-    "vignette": apply_vignette,
-    "grading": apply_color_grading,
-    "flare": apply_lens_flare,
+FILTER_FUNCS = {
+    "gaussian": gaussian,
+    "bloom": bloom,
+    "vignette": vignette,
+    "grading": grading,
+    "flare": flare,
 }
 
+# ================= PROCESS =================
 
-def process_image(image_path, filter_name):
-    img = cv2.imread(image_path)
-    if img is None:
-        print(f"❌ Failed to load {image_path}")
-        return
+def process_all():
+    for name, paths in FILTERS.items():
+        for file in os.listdir(paths["input"]):
+            if file.lower().endswith(SUPPORTED_INPUTS):
+                src = os.path.join(paths["input"], file)
+                dst = os.path.join(paths["output"], f"{name}_{file}")
 
-    img = cv2.resize(img, (600, 400))
+                img = cv2.imread(src)
+                if img is None:
+                    continue
 
-    name, ext = os.path.splitext(os.path.basename(image_path))
-    output_dir = FILTERS[filter_name]["output"]
-    output_path = os.path.join(output_dir, f"{name}_{filter_name}{ext}")
+                img = cv2.resize(img, (600, 400))
+                out = FILTER_FUNCS[name](img)
+                cv2.imwrite(dst, out)
+                print(f"✅ {name} → {file}")
 
-    processed = FILTER_FUNCTIONS[filter_name](img)
-    cv2.imwrite(output_path, processed)
-
-    print(f"✅ {filter_name} applied → {output_path}")
-
-
-class FilterHandler(FileSystemEventHandler):
-    def __init__(self, filter_name):
-        self.filter_name = filter_name
-
-    def on_created(self, event):
-        if event.is_directory:
-            return
-
-        if event.src_path.lower().endswith(SUPPORTED_INPUTS):
-            time.sleep(1)  # ensure file fully saved
-            process_image(event.src_path, self.filter_name)
-
-def github_test_run():
-    print("🐙 Running in GitHub mode")
-
-    test_image = "test.jpg"
-    if not os.path.exists(test_image):
-        print("⚠️ test.jpg not found — skipping")
-        return
-
-    img = cv2.imread(test_image)
-    if img is None:
-        print("❌ Failed to load test image")
-        return
-
-    img = cv2.resize(img, (600, 400))
-    os.makedirs("github_outputs", exist_ok=True)
-
-    for name, func in FILTER_FUNCTIONS.items():
-        out = func(img)
-        cv2.imwrite(f"github_outputs/{name}.jpg", out)
-        print(f"✅ {name} filter generated")
-
-    print("🎉 GitHub test completed")
-
-if RUN_MODE == "github":
-    github_test_run()
-else:
-    observers = []
-
-    for filter_name, paths in FILTERS.items():
-        handler = FilterHandler(filter_name)
-        observer = Observer()
-        observer.schedule(handler, paths["input"], recursive=False)
-        observer.start()
-        observers.append(observer)
-        print(f"👀 Watching {paths['input']}")
-
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("🛑 Stopping watchers...")
-        for o in observers:
-            o.stop()
-        for o in observers:
-            o.join()
+if __name__ == "__main__":
+    process_all()
+    print("🎉 Image processing complete")
