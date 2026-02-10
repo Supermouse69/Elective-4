@@ -1,213 +1,148 @@
 import os
-import time
-import threading
 import cv2
 import numpy as np
-from tkinter import *
-from tkinter import scrolledtext
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-from tkinterdnd2 import DND_FILES, TkinterDnD
-from PIL import Image, ImageTk
 
-INPUT_DIR = "input_images"
-OUTPUT_DIR = "output_images"
 SUPPORTED_INPUTS = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp')
 
-os.makedirs(INPUT_DIR, exist_ok=True)
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+FILTERS = {
+    "gaussian": {"input": "input_gaussian", "output": "output_images"},
+    "bloom": {"input": "input_bloom", "output": "output_images"},
+    "vignette": {"input": "input_vignette", "output": "output_images"},
+    "grading": {"input": "input_grading", "output": "output_images"},
+    "flare": {"input": "input_flare", "output": "output_images"},
+    "cartoon": {"input": "input_cartoon", "output": "output_images"},
+    "sepia": {"input": "input_sepia", "output": "output_images"},
+    "rgb_glitch": {"input": "input_rgb_glitch", "output": "output_images"},
+    "neon_glow": {"input": "input_neon_glow", "output": "output_images"},
+    "vhs_filter": {"input": "input_vhs_filter", "output": "output_images"},
+}
 
-observer = None
+for f in FILTERS.values():
+    os.makedirs(f["input"], exist_ok=True)
+    os.makedirs(f["output"], exist_ok=True)
 
-
-
-def apply_gaussian_blur(img):
+def gaussian(img):
     return cv2.GaussianBlur(img, (15, 15), 0)
 
-
-def apply_bloom(img):
+def bloom(img):
     blur = cv2.GaussianBlur(img, (0, 0), 15)
     return cv2.addWeighted(img, 1.2, blur, 0.6, 0)
 
-
-def apply_vignette(img):
+def vignette(img):
     rows, cols = img.shape[:2]
+
     kernel_x = cv2.getGaussianKernel(cols, 200)
     kernel_y = cv2.getGaussianKernel(rows, 200)
     mask = kernel_y * kernel_x.T
-    mask /= mask.max()
+    mask = mask / mask.max()
 
-    output = img.copy()
+    # Convert image to float
+    out = img.astype(np.float32)
+
     for i in range(3):
-        output[:, :, i] = output[:, :, i] * mask
-    return output
+        out[:, :, i] = out[:, :, i] * mask
+
+    # Convert back to uint8
+    return np.clip(out, 0, 255).astype(np.uint8)
 
 
-def apply_color_grading(img):
+def grading(img):
     lut = np.zeros((256, 1, 3), dtype=np.uint8)
     for i in range(256):
         lut[i][0] = [
-            np.clip(i * 1.05, 0, 255),
-            np.clip(i * 1.00, 0, 255),
-            np.clip(i * 1.15, 0, 255)
+            min(255, int(i * 1.05)),
+            min(255, int(i * 1.00)),
+            min(255, int(i * 1.15))
         ]
     return cv2.LUT(img, lut)
 
-
-def apply_lens_flare(img):
+def flare(img):
     overlay = img.copy()
     h, w = img.shape[:2]
-    cx = np.random.randint(w // 4, w * 3 // 4)
-    cy = np.random.randint(h // 4, h * 3 // 4)
-
+    cx, cy = w // 2, h // 2
     for r in range(40, 200, 40):
         cv2.circle(overlay, (cx, cy), r, (255, 255, 255), -1)
-
     return cv2.addWeighted(overlay, 0.3, img, 0.7, 0)
 
+def cartoon(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.medianBlur(gray, 7)
 
+    edges = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_MEAN_C,
+        cv2.THRESH_BINARY,
+        9, 2
+    )
 
-def process_image(image_path):
-    image = cv2.imread(image_path)
+    color = cv2.bilateralFilter(img, 9, 300, 300)
+    return cv2.bitwise_and(color, color, mask=edges)
 
-    if image is None:
-        log_box.insert(END, "❌ Failed to load image\n")
-        return
+def sepia(img):
+    kernel = np.array([
+        [0.272, 0.534, 0.131],
+        [0.349, 0.686, 0.168],
+        [0.393, 0.769, 0.189]
+    ])
+    out = cv2.transform(img, kernel)
+    return np.clip(out, 0, 255).astype(np.uint8)
 
-    image = cv2.resize(image, (600, 400))
-    name = os.path.splitext(os.path.basename(image_path))[0]
-    ext = output_format.get()
+def rgb_glitch(img):
+    b, g, r = cv2.split(img)
+    rows, cols = img.shape[:2]
 
-    def save(img, suffix):
-        cv2.imwrite(f"{OUTPUT_DIR}/{name}_{suffix}.{ext}", img)
+    r = np.roll(r, 5, axis=1)
+    b = np.roll(b, -5, axis=0)
 
-    if blur_var.get():
-        save(apply_gaussian_blur(image), "gaussian")
+    return cv2.merge((b, g, r))
 
-    if bloom_var.get():
-        save(apply_bloom(image), "bloom")
+def neon_glow(img):
+    edges = cv2.Canny(img, 100, 200)
+    edges = cv2.dilate(edges, None)
+    edges_col = cv2.applyColorMap(edges, cv2.COLORMAP_HOT)
+    return cv2.addWeighted(img, 0.8, edges_col, 0.6, 0)
 
-    if vignette_var.get():
-        save(apply_vignette(image), "vignette")
+def vhs_filter(img):
+    noise = np.random.randint(0, 25, img.shape, dtype=np.uint8)
+    img = cv2.add(img, noise)
 
-    if grading_var.get():
-        save(apply_color_grading(image), "grading")
+    lines = img.copy()
+    for i in range(0, img.shape[0], 4):
+        lines[i:i+1, :] = 0
 
-    if flare_var.get():
-        save(apply_lens_flare(image), "flare")
-
-    log_box.insert(END, f"✅ Processed: {name}\n")
-    log_box.see(END)
-
-
-
-class ImageHandler(FileSystemEventHandler):
-    def on_created(self, event):
-        if not event.is_directory and event.src_path.lower().endswith(SUPPORTED_INPUTS):
-            time.sleep(1)
-            process_image(event.src_path)
-
-
-def start_watching():
-    global observer
-    observer = Observer()
-    observer.schedule(ImageHandler(), INPUT_DIR, recursive=False)
-    observer.start()
-    log_box.insert(END, "👀 Folder monitoring started\n")
-
-
-def stop_watching():
-    global observer
-    if observer:
-        observer.stop()
-        observer.join()
-        observer = None
-        log_box.insert(END, "🛑 Folder monitoring stopped\n")
+    return cv2.addWeighted(img, 0.9, lines, 0.1, 0)
 
 
 
-def drop_image(event):
-    files = root.tk.splitlist(event.data)
-    for file in files:
-        if file.lower().endswith(SUPPORTED_INPUTS):
-            process_image(file)
-        else:
-            log_box.insert(END, "❌ Unsupported file type\n")
+FILTER_FUNCS = {
+    "gaussian": gaussian,
+    "bloom": bloom,
+    "vignette": vignette,
+    "grading": grading,
+    "flare": flare,
+    "cartoon": cartoon,
+    "sepia": sepia,
+    "rgb_glitch": rgb_glitch,
+    "neon_glow": neon_glow,
+    "vhs_filter": vhs_filter,
+}
 
+def process_all():
+    for name, paths in FILTERS.items():
+        for file in os.listdir(paths["input"]):
+            if file.lower().endswith(SUPPORTED_INPUTS):
+                src = os.path.join(paths["input"], file)
+                dst = os.path.join(paths["output"], f"{name}_{file}")
 
+                img = cv2.imread(src)
+                if img is None:
+                    continue
 
-root = TkinterDnD.Tk()
-root.title("Elective 4")
-root.geometry("850x700")
-root.resizable(False, False)
+                img = cv2.resize(img, (600, 400))
+                out = FILTER_FUNCS[name](img)
+                cv2.imwrite(dst, out)
+                print(f"✅ {name} → {file}")
 
-
-bg_image = Image.open("background.jpg")
-bg_image = bg_image.resize((850, 700), Image.LANCZOS)
-bg_photo = ImageTk.PhotoImage(bg_image)
-
-bg_label = Label(root, image=bg_photo)
-bg_label.place(x=0, y=0, relwidth=1, relheight=1)
-
-
-title = Label(root, text="📸 Image Auto Processor",
-              font=("Arial", 20, "bold"), bg="#ffffff")
-title.pack(pady=10)
-title.lift()
-
-
-drop_label = Label(
-    root,
-    text="📂 Drag & Drop Images Here",
-    font=("Arial", 14, "bold"),
-    relief="ridge",
-    width=45,
-    height=4,
-    bg="#f0f0f0"
-)
-drop_label.pack(pady=10)
-drop_label.lift()
-drop_label.drop_target_register(DND_FILES)
-drop_label.dnd_bind("<<Drop>>", drop_image)
-
-
-filter_frame = LabelFrame(root, text="Filters", padx=15, pady=10, bg="#ffffff")
-filter_frame.pack(pady=5)
-filter_frame.lift()
-
-blur_var = BooleanVar()
-bloom_var = BooleanVar()
-vignette_var = BooleanVar()
-grading_var = BooleanVar()
-flare_var = BooleanVar()
-
-Checkbutton(filter_frame, text="Gaussian Blur", variable=blur_var, bg="#ffffff").grid(row=0, column=0, sticky="w")
-Checkbutton(filter_frame, text="Bloom Effect", variable=bloom_var, bg="#ffffff").grid(row=0, column=1, sticky="w")
-Checkbutton(filter_frame, text="Vignette", variable=vignette_var, bg="#ffffff").grid(row=1, column=0, sticky="w")
-Checkbutton(filter_frame, text="Color Grading", variable=grading_var, bg="#ffffff").grid(row=1, column=1, sticky="w")
-Checkbutton(filter_frame, text="Lens Flare", variable=flare_var, bg="#ffffff").grid(row=2, column=0, sticky="w")
-
-
-format_frame = LabelFrame(root, text="Output Format", padx=10, pady=5, bg="#ffffff")
-format_frame.pack(pady=5)
-format_frame.lift()
-
-output_format = StringVar(value="jpg")
-OptionMenu(format_frame, output_format, "jpg", "png", "bmp", "tiff", "webp").pack()
-
-
-Button(root, text="▶ Start Folder Monitoring", width=30,
-       command=lambda: threading.Thread(target=start_watching, daemon=True).start()).pack(pady=5)
-Button(root, text="⏹ Stop Folder Monitoring", width=30,
-       command=stop_watching).pack(pady=5)
-
-
-Label(root, text="Status Log", font=("Arial", 12), bg="#ffffff").pack()
-log_box = scrolledtext.ScrolledText(root, width=100, height=12)
-log_box.pack(padx=10, pady=5)
-log_box.lift()
-
-Label(root, text="Drag images OR drop them into 'input_images/'",
-      font=("Arial", 10, "italic"), bg="#ffffff").pack(pady=5)
-
-root.mainloop()
+if __name__ == "__main__":
+    process_all()
+    print("🎉 Image processing complete")
