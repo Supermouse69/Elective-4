@@ -5,11 +5,11 @@ import numpy as np
 SUPPORTED_INPUTS = ('.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp')
 
 FILTERS = {
-    "gaussian": {"input": "input_gaussian", "output": "output_gaussian"},
-    "bloom": {"input": "input_bloom", "output": "output_bloom"},
-    "vignette": {"input": "input_vignette", "output": "output_vignette"},
-    "grading": {"input": "input_grading", "output": "output_grading"},
-    "flare": {"input": "input_flare", "output": "output_flare"},
+    "gaussian": {"input": "input_gaussian", "output": "output_images"},
+    "bloom": {"input": "input_bloom", "output": "output_images"},
+    "vignette": {"input": "input_vignette", "output": "output_images"},
+    "grading": {"input": "input_grading", "output": "output_images"},
+    "flare": {"input": "input_flare", "output": "output_images"},
 }
 
 for f in FILTERS.values():
