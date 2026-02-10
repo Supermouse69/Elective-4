@@ -3,6 +3,10 @@ name: Elective Four – Auto Run
 on:
   push:
 
+# ✅ REQUIRED: allow GitHub Actions to push commits
+permissions:
+  contents: write
+
 jobs:
   run-project:
     name: Run Elective Four Project
@@ -25,3 +29,18 @@ jobs:
       - name: Run project
         run: |
           python IMAGEPROCESSING.py
+
+      - name: Upload processed images
+        uses: actions/upload-artifact@v4
+        with:
+          name: processed-images
+          path: output_gaussian/
+
+      - name: Commit output images
+        if: github.actor != 'github-actions[bot]'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output_gaussian/
+          git commit -m "Add processed images" || echo "No changes to commit"
+          git push
